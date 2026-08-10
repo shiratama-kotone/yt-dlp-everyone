@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YouTube ダウンローダー (個人用)</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #1a1d24;
+    --border: #2a2e37;
+    --text: #e6e8eb;
+    --muted: #8a8f98;
+    --accent: #4f8cff;
+    --accent-hover: #3d75e0;
+    --danger: #ff5c5c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px;
+  }
+  .container { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  input[type=text], input[type=password] {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #10131a;
+    color: var(--text);
+    font-size: 14px;
+    margin-bottom: 12px;
+  }
+  button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  button:hover { background: var(--accent-hover); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .video-info { display: flex; gap: 12px; margin-bottom: 12px; }
+  .video-info img { width: 120px; border-radius: 6px; }
+  .video-meta { font-size: 13px; color: var(--muted); }
+  .video-meta .title { color: var(--text); font-size: 15px; margin-bottom: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: normal; }
+  select { background: #10131a; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px; width: 100%; }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; }
+  .status { font-size: 13px; margin-top: 8px; }
+  .status.error { color: var(--danger); }
+  .status.ok { color: #6be08a; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>YouTube ダウンローダー</h1>
+  <div class="sub">個人利用専用サーバー / yt-dlp + ffmpeg</div>
+
+  <div class="panel">
+    <label for="apiKey">APIキー(サーバー側で API_KEY を設定している場合のみ入力)</label>
+    <input type="password" id="apiKey" placeholder="任意">
+
+    <label for="url">YouTube 動画URL</label>
+    <input type="text" id="url" placeholder="https://www.youtube.com/watch?v=...">
+
+    <button id="fetchBtn">画質一覧を取得</button>
+    <div id="fetchStatus" class="status"></div>
+  </div>
+
+  <div class="panel" id="resultPanel" style="display:none;">
+    <div class="video-info">
+      <img id="thumb" src="" alt="">
+      <div class="video-meta">
+        <div class="title" id="videoTitle"></div>
+        <div id="videoChannel"></div>
+        <div id="videoDuration"></div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>映像フォーマット(必須)</label>
+        <select id="videoFormat"></select>
+      </div>
+      <div>
+        <label>音声フォーマット(映像に音声が含まれない場合に選択)</label>
+        <select id="audioFormat">
+          <option value="">(選択した映像に音声が含まれる場合はここは空でOK)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="hint">
+      解像度が1080p以上など映像・音声が分かれている形式を選んだ場合、サーバー側で自動的に結合してMP4として返します。
+    </div>
+
+    <div style="margin-top:12px;">
+      <button id="downloadBtn">ダウンロード開始</button>
+    </div>
+    <div id="downloadStatus" class="status"></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+// APIキーはブラウザに保存しておく(個人用途のため簡易実装)
+$('apiKey').value = localStorage.getItem('ytdl_api_key') || '';
+$('apiKey').addEventListener('change', () => {
+  localStorage.setItem('ytdl_api_key', $('apiKey').value);
+});
+
+function authHeaders() {
+  const key = $('apiKey').value.trim();
+  return key ? { 'x-api-key': key } : {};
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return '不明';
+  const mb = bytes / (1024 * 1024);
+  return mb >= 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb.toFixed(1)} MB`;
+}
+
+function formatDuration(sec) {
+  if (!sec) return '';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+let lastFormats = [];
+
+$('fetchBtn').addEventListener('click', async () => {
+  const url = $('url').value.trim();
+  const statusEl = $('fetchStatus');
+  statusEl.className = 'status';
+  statusEl.textContent = '';
+
+  if (!url) {
+    statusEl.className = 'status error';
+    statusEl.textContent = 'URLを入力してください';
+    return;
+  }
+
+  $('fetchBtn').disabled = true;
+  statusEl.textContent = '取得中...';
+
+  try {
+    const res = await fetch(`/api/formats?url=${encodeURIComponent(url)}`, {
+      headers: authHeaders(),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '取得に失敗しました');
+
+    lastFormats = data.formats || [];
+    $('videoTitle').textContent = data.title || '(タイトル不明)';
+    $('videoChannel').textContent = data.channel || '';
+    $('videoDuration').textContent = formatDuration(data.duration);
+    $('thumb').src = data.thumbnail || '';
+
+    const videoSelect = $('videoFormat');
+    const audioSelect = $('audioFormat');
+    videoSelect.innerHTML = '';
+    audioSelect.innerHTML = '<option value="">(映像に音声が含まれる場合は空のままでOK)</option>';
+
+    lastFormats
+      .filter((f) => f.hasVideo)
+      .forEach((f) => {
+        const opt = document.createElement('option');
+        opt.value = f.formatId;
+        const audioTag = f.hasAudio ? '音声あり' : '映像のみ';
+        opt.textContent = `${f.resolution || '?'} / ${f.ext} / ${audioTag} / ${formatBytes(f.filesize)} (id:${f.formatId})`;
+        videoSelect.appendChild(opt);
+      });
+
+    lastFormats
+      .filter((f) => f.hasAudio && !f.hasVideo)
+      .forEach((f) => {
+        const opt = document.createElement('option');
+        opt.value = f.formatId;
+        opt.textContent = `${f.acodec || 'audio'} / ${f.ext} / ${Math.round(f.abr || 0)}kbps / ${formatBytes(f.filesize)} (id:${f.formatId})`;
+        audioSelect.appendChild(opt);
+      });
+
+    $('resultPanel').style.display = 'block';
+    statusEl.className = 'status ok';
+    statusEl.textContent = '取得完了';
+  } catch (e) {
+    statusEl.className = 'status error';
+    statusEl.textContent = e.message;
+  } finally {
+    $('fetchBtn').disabled = false;
+  }
+});
+
+$('downloadBtn').addEventListener('click', () => {
+  const url = $('url').value.trim();
+  const formatId = $('videoFormat').value;
+  const audioFormatId = $('audioFormat').value;
+  const statusEl = $('downloadStatus');
+
+  if (!url || !formatId) {
+    statusEl.className = 'status error';
+    statusEl.textContent = '映像フォーマットを選択してください';
+    return;
+  }
+
+  const params = new URLSearchParams({ url, formatId });
+  if (audioFormatId) params.set('audioFormatId', audioFormatId);
+  const key = $('apiKey').value.trim();
+  if (key) params.set('apiKey', key);
+
+  statusEl.className = 'status';
+  statusEl.textContent = 'ダウンロードを開始しました(完了までブラウザの表示に従ってください)';
+
+  // サーバーが直接ファイルを返すため、リンク遷移でブラウザのダウンロード機能を利用する
+  window.location.href = `/api/download?${params.toString()}`;
+});
+</script>
+</body>
+</html>
