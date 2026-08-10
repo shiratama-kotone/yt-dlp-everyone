@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: youtube-downloader
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: API_KEY
+        sync: false      # Renderのダッシュボードで各自設定してください(必須推奨)
+      - key: PROCESS_TIMEOUT_MS
+        value: "6000000"  # 10分。長い動画をダウンロードする場合は調整してください
