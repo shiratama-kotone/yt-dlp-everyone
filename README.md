@@ -48,9 +48,11 @@ docker run -p 10000:10000 -e API_KEY=your-secret-key ytdl-server
 `https://<サービス名>.onrender.com/` にアクセスすると操作画面が開きます。
 
 1. `API_KEY` を設定している場合は画面上部にAPIキーを入力(ブラウザに保存されます)
-2. YouTubeのURLを入力し「画質一覧を取得」をクリック
-3. 映像フォーマットを選択(必要なら音声フォーマットも選択)
+2. YouTubeのURLを入力し「サイズを取得」をクリック
+3. 表示された解像度(推定サイズつき)から1つ選ぶ
 4. 「ダウンロード開始」をクリックするとブラウザのダウンロード機能でMP4が保存されます
+
+出力は常にMP4固定、音声は常に自動で結合されます(選択肢に音声フォーマットは出てきません)。
 
 ## 4. API仕様
 
@@ -84,6 +86,10 @@ GET /api/formats?url=https://www.youtube.com/watch?v=XXXXXXXXXXX
   "thumbnail": "https://...",
   "duration": 213,
   "channel": "チャンネル名",
+  "simpleOptions": [
+    { "formatId": "299", "audioFormatId": "251", "label": "1080p", "estimatedSizeMB": 70.6 },
+    { "formatId": "22",  "audioFormatId": null,  "label": "720p",  "estimatedSizeMB": 23.8 }
+  ],
   "formats": [
     {
       "formatId": "137",
@@ -118,6 +124,13 @@ GET /api/formats?url=https://www.youtube.com/watch?v=XXXXXXXXXXX
   ]
 }
 ```
+
+- **`simpleOptions`**: 解像度と推定サイズだけで選べる簡易リスト(HTMLページはこちらを使用)。
+  同じ解像度が複数ある場合はビットレートが最も高いものだけを残し、映像に音声が
+  含まれない場合は自動で最良音質の音声(`audioFormatId`)と組み合わせています。
+  `estimatedSizeMB` はYouTube側が返す概算値で、実際のファイルサイズと多少ずれる
+  ことがあります。
+- **`formats`**: 生のフォーマット一覧(デバッグ・細かい制御をしたい場合用)。
 
 1080p以上のような高画質は `hasVideo: true, hasAudio: false` の形式(映像のみ)で
 返ってくることが多いです。その場合は `hasAudio: true, hasVideo: false` の

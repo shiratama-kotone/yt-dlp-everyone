@@ -262,11 +262,47 @@ app.get('/api/formats', apiKeyAuth, async (req, res) => {
         return (b.tbr || 0) - (a.tbr || 0);
       });
 
+    // ------------------------------------------------------------
+    // シンプルな選択肢を構築(解像度 + 推定サイズだけで選べるように)
+    // - 出力は常にMP4固定
+    // - 音声は常に自動付与(映像に音声が無ければ、最良音質の音声を自動選択して結合)
+    // - 同じ解像度が複数ある場合はビットレートが最も高いものだけ残す
+    // ------------------------------------------------------------
+    const audioCandidates = formats.filter((f) => f.hasAudio && !f.hasVideo);
+    const bestAudio = audioCandidates.sort(
+      (a, b) => (b.abr || 0) - (a.abr || 0) || (b.tbr || 0) - (a.tbr || 0)
+    )[0] || null;
+
+    const bestByHeight = new Map();
+    for (const f of formats) {
+      if (!f.hasVideo || !f.height) continue;
+      const current = bestByHeight.get(f.height);
+      if (!current || (f.tbr || 0) > (current.tbr || 0)) {
+        bestByHeight.set(f.height, f);
+      }
+    }
+
+    const simpleOptions = Array.from(bestByHeight.values())
+      .sort((a, b) => (b.height || 0) - (a.height || 0))
+      .map((f) => {
+        const needsAudio = !f.hasAudio && !!bestAudio;
+        const estimatedBytes = (f.filesize || 0) + (needsAudio ? (bestAudio.filesize || 0) : 0);
+        return {
+          formatId: f.formatId,
+          audioFormatId: needsAudio ? bestAudio.formatId : null,
+          label: `${f.height}p`,
+          estimatedSizeMB: estimatedBytes
+            ? Math.round((estimatedBytes / 1024 / 1024) * 10) / 10
+            : null,
+        };
+      });
+
     res.json({
       title: info.title || null,
       thumbnail: info.thumbnail || null,
       duration: info.duration || null,
       channel: info.channel || info.uploader || null,
+      simpleOptions,
       formats,
     });
   } catch (err) {
@@ -308,6 +344,7 @@ app.get('/api/download', apiKeyAuth, async (req, res) => {
   const args = [
     '-f', formatArg,
     '--merge-output-format', 'mp4',
+    '--remux-video', 'mp4',
     '--no-playlist',
     '--no-warnings',
     '--ffmpeg-location', FFMPEG_PATH,
