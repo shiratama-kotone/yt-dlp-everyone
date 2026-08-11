@@ -9,4 +9,6 @@ services:
       - key: API_KEY
         sync: false      # Renderのダッシュボードで各自設定してください(必須推奨)
       - key: PROCESS_TIMEOUT_MS
-        value: "6000000"  # 10分。長い動画をダウンロードする場合は調整してください
+        value: "600000"  # 10分。長い動画をダウンロードする場合は調整してください
+      - key: COOKIES_BASE64
+        sync: false      # cookies.txtをBase64化した文字列。Botチェック回避に必要な場合が多い

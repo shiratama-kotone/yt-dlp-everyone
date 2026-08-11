@@ -171,7 +171,71 @@ https://<worker名>.<サブドメイン>.workers.dev/formats?url=https://youtu.b
 https://<worker名>.<サブドメイン>.workers.dev/download?url=https://youtu.be/XXXX&formatId=137&audioFormatId=140
 ```
 
-## 6. 注意点・既知の制約
+## 6. 環境変数一覧
+
+| 変数名 | 必須 | 説明 |
+|---|---|---|
+| `API_KEY` | 推奨 | APIの簡易認証キー。未設定だと誰でも使える状態になる |
+| `PORT` | - | Expressが待ち受けるポート。Renderが自動設定するため通常は変更不要 |
+| `COOKIES_BASE64` | 状況による | Botチェック回避用Cookie(詳細は次項) |
+| `PROCESS_TIMEOUT_MS` | - | yt-dlpの1リクエストあたりの最大実行時間(ミリ秒)。未設定時は `600000`(10分) |
+| `YTDLP_PATH` | - | yt-dlp実行ファイルのパス。未設定時は `yt-dlp`(PATH上のもの) |
+| `FFMPEG_PATH` | - | ffmpeg実行ファイルのパス。未設定時は `ffmpeg`(PATH上のもの) |
+
+### PROCESS_TIMEOUT_MS について
+
+`/api/formats`(情報取得)と `/api/download`(ダウンロード+結合)は、どちらも
+内部でyt-dlpの子プロセスを起動して完了を待ちます。この待ち時間の上限が
+`PROCESS_TIMEOUT_MS` です。
+
+- 処理がこの時間を超えると、サーバーは子プロセスを強制終了し、
+  `処理がタイムアウトしました(N秒)` というエラーを返します
+- デフォルトは `600000`(10分)。長い動画・低速な回線・高画質(ファイルサイズ大)を
+  扱う場合は、Renderの環境変数でもっと大きい値(例: `1800000` = 30分)に
+  変更してください
+- 逆に、明らかにハングしたリクエストを早めに切り上げたい場合は短めの値
+  (例: `120000` = 2分)にしても構いません
+- あくまでこのサーバー内部の上限であり、Render自体やブラウザ側のタイムアウト
+  (無料プランのスリープ、リバースプロキシのタイムアウトなど)には別途影響される点に注意してください
+
+## 7. 「Sign in to confirm you're not a bot」対策 (Cookie設定)
+
+YouTube側のBotチェックにより、Cookie無しだと `Sign in to confirm you're not a bot` という
+エラーで失敗することがあります。その場合はブラウザのCookieをyt-dlpに渡す必要があります。
+
+### 手順
+
+1. **ブラウザでYouTubeにログインした状態**で、Cookieをエクスポートする拡張機能
+   (例: Chromeの「Get cookies.txt LOCALLY」など)を使い、Netscape形式の
+   `cookies.txt` をダウンロードする
+2. `cookies.txt` をBase64の1行文字列に変換する
+
+   ```bash
+   # macOS
+   base64 -i cookies.txt | tr -d '\n' > cookies_base64.txt
+
+   # Linux
+   base64 -w0 cookies.txt > cookies_base64.txt
+
+   # Windows (PowerShell)
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes("cookies.txt")) | Set-Content cookies_base64.txt
+   ```
+
+3. `cookies_base64.txt` の中身を、Renderのダッシュボード →
+   対象サービス → **Environment** → `COOKIES_BASE64` にそのまま貼り付けて保存する
+4. Renderが自動的に再デプロイされる(されない場合は手動でRedeployする)
+
+サーバー起動時にこの値がデコードされ、一時ファイルとして書き出された上で
+全てのyt-dlp呼び出しに `--cookies` オプションとして自動的に付与されます。
+
+**注意点:**
+- Cookieには自分のYouTubeアカウントの認証情報が含まれます。第三者に共有しないでください。
+- Cookieには有効期限があるため、しばらくして再びBotチェックに引っかかるようになったら
+  同じ手順で再取得・再設定してください。
+- `COOKIES_BASE64` が未設定の場合、起動ログに警告が出ますが動作自体は続行します
+  (Cookie無しでダウンロードできる動画も多いため)。
+
+## 8. 注意点・既知の制約
 
 - **Render無料プランのタイムアウト**: 無料プラン(Free Web Service)は
   一定時間アクセスがないとスリープし、次回リクエスト時にコールドスタートが

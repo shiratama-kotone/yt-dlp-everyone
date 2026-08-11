@@ -32,6 +32,32 @@ const FFMPEG_PATH = process.env.FFMPEG_PATH || 'ffmpeg';
 // yt-dlp / download の最大実行時間(ミリ秒)。長い動画・低速回線を考慮して長めに設定。
 const PROCESS_TIMEOUT_MS = parseInt(process.env.PROCESS_TIMEOUT_MS || '', 10) || 10 * 60 * 1000; // 10分
 
+// ------------------------------------------------------------------
+// Cookie対応 (「Sign in to confirm you're not a bot」対策)
+// Netscape形式の cookies.txt をBase64化した文字列を環境変数 COOKIES_BASE64 に
+// 設定しておくと、起動時にデコードして一時ファイルへ書き出し、
+// yt-dlp の --cookies オプションとして全リクエストに付与する。
+// ------------------------------------------------------------------
+let cookiesFilePath = null;
+if (process.env.COOKIES_BASE64) {
+  try {
+    const decoded = Buffer.from(process.env.COOKIES_BASE64, 'base64').toString('utf-8');
+    cookiesFilePath = path.join(os.tmpdir(), 'yt-dlp-cookies.txt');
+    fs.writeFileSync(cookiesFilePath, decoded, { mode: 0o600 });
+    console.log('COOKIES_BASE64 からCookieファイルを生成しました');
+  } catch (e) {
+    console.error('COOKIES_BASE64 の読み込みに失敗しました:', e.message);
+    cookiesFilePath = null;
+  }
+} else {
+  console.warn('COOKIES_BASE64 が未設定です。「Sign in to confirm you\'re not a bot」エラーが出る場合は設定してください。');
+}
+
+// yt-dlp に渡すCookie関連の追加引数
+function cookieArgs() {
+  return cookiesFilePath ? ['--cookies', cookiesFilePath] : [];
+}
+
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -146,7 +172,7 @@ app.get('/api/formats', apiKeyAuth, async (req, res) => {
   }
 
   try {
-    const args = ['-J', '--no-playlist', '--no-warnings', url];
+    const args = ['-J', '--no-playlist', '--no-warnings', ...cookieArgs(), url];
     const { stdout } = await runProcess(YTDLP_PATH, args);
 
     let info;
@@ -236,6 +262,7 @@ app.get('/api/download', apiKeyAuth, async (req, res) => {
     '--no-playlist',
     '--no-warnings',
     '--ffmpeg-location', FFMPEG_PATH,
+    ...cookieArgs(),
     '-o', outputTemplate,
     url,
   ];
