@@ -58,6 +58,22 @@ function cookieArgs() {
   return cookiesFilePath ? ['--cookies', cookiesFilePath] : [];
 }
 
+// ------------------------------------------------------------------
+// YouTubeのSABR配信化・署名/nチャレンジ対策
+// PO Token(Proof of Origin)を解決できないと、cookieを設定していても
+// 一部フォーマットが「存在しない」扱いになり "Requested format is not
+// available" になることがある。yt-dlp-ejs(Dockerfileでインストール済み)と
+// Deno(JSランタイム)を使って解決させ、それでも取得できないフォーマットは
+// 強制的に一覧へ含めさせることで回避する。
+// ------------------------------------------------------------------
+function resilienceArgs() {
+  return [
+    '--js-runtimes', 'deno',
+    '--remote-components', 'ejs:github',
+    '--extractor-args', 'youtube:formats=missing_pot',
+  ];
+}
+
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -158,6 +174,39 @@ app.get('/api/health', (req, res) => {
 });
 
 // ------------------------------------------------------------------
+// GET /api/debug?url=<YouTube URL>
+// yt-dlp の --list-formats を詳細ログ付きで実行し、生の出力をそのまま返す。
+// "Requested format is not available" 等の原因調査用(実ダウンロードはしない)
+// ------------------------------------------------------------------
+app.get('/api/debug', apiKeyAuth, async (req, res) => {
+  const { url } = req.query;
+
+  if (!url) {
+    return res.status(400).json({ error: 'クエリパラメータ url が必要です' });
+  }
+  if (!isValidYouTubeUrl(url)) {
+    return res.status(400).json({ error: 'YouTubeのURLではありません' });
+  }
+
+  const args = [
+    ...cookieArgs(),
+    ...resilienceArgs(),
+    '-v',
+    '--list-formats',
+    '--no-playlist',
+    url,
+  ];
+
+  try {
+    const { stdout, stderr } = await runProcess(YTDLP_PATH, args, { timeoutMs: 90 * 1000 });
+    res.json({ ok: true, stdout, stderr });
+  } catch (err) {
+    // 調査目的のため、失敗時も500ではなく内容をそのまま返す
+    res.json({ ok: false, error: err.message || String(err) });
+  }
+});
+
+// ------------------------------------------------------------------
 // GET /api/formats?url=<YouTube URL>
 // 利用可能な画質/音声フォーマット一覧を返す
 // ------------------------------------------------------------------
@@ -172,7 +221,7 @@ app.get('/api/formats', apiKeyAuth, async (req, res) => {
   }
 
   try {
-    const args = ['-J', '--no-playlist', '--no-warnings', ...cookieArgs(), url];
+    const args = ['-J', '--no-playlist', '--no-warnings', ...cookieArgs(), ...resilienceArgs(), url];
     const { stdout } = await runProcess(YTDLP_PATH, args);
 
     let info;
@@ -263,6 +312,7 @@ app.get('/api/download', apiKeyAuth, async (req, res) => {
     '--no-warnings',
     '--ffmpeg-location', FFMPEG_PATH,
     ...cookieArgs(),
+    ...resilienceArgs(),
     '-o', outputTemplate,
     url,
   ];

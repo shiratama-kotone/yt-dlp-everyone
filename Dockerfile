@@ -1,20 +1,24 @@
-FROM node:20-slim
+FROM node:20-bookworm-slim
 
-# ffmpeg と yt-dlp の実行に必要なパッケージをインストール
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+# yt-dlp(Python製) と ffmpeg、証明書類をインストール
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 \
+        python3-pip \
         ffmpeg \
         curl \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# yt-dlp のスタンドアロンバイナリを取得
-# 注意: "yt-dlp"(拡張子なし)はPython同梱ではなく、実行時にシステムのpython3を要求する。
-# 一方 "yt-dlp_linux" はPythonをバイナリ内に同梱した単体実行ファイルなので、
-# ベースイメージに python3 を追加インストールしなくても動作する。
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux \
-        -o /usr/local/bin/yt-dlp && \
-    chmod a+rx /usr/local/bin/yt-dlp
+# yt-dlp は pip で最新版を入れる(バイナリより更新が容易なため)
+# yt-dlp-ejs: YouTubeのSABR配信化に伴い必要になった署名/nチャレンジ解決用の追加コンポーネント。
+# これが無いと、cookieを設定していても一部フォーマットが
+# "Requested format is not available" として弾かれることがある。
+RUN pip3 install --no-cache-dir --break-system-packages -U yt-dlp yt-dlp-ejs
+
+# Deno: yt-dlp-ejsの署名/nチャレンジ解決に使うJavaScriptランタイム。
+# ベースイメージのNode.js(20系)はyt-dlp-ejsの要件(Node 22.6+)を満たさないため、
+# yt-dlpが標準で優先的に使うDenoを別途インストールする。
+RUN npm install -g deno
 
 WORKDIR /app
 

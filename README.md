@@ -147,6 +147,17 @@ GET /api/download?url=https://youtu.be/XXXXXXXXXXX&formatId=137&audioFormatId=14
 レスポンスは `Content-Disposition: attachment` 付きのMP4バイナリです。
 ダウンロード完了後、サーバー上の一時ファイルは自動的に削除されます。
 
+### GET /api/debug?url=\<YouTube URL\>
+
+実際にダウンロードはせず、yt-dlpの `--list-formats`(詳細ログ付き)の
+生の出力をそのまま返します。「Requested format is not available」など
+原因が分かりにくいエラーが出たときの調査用エンドポイントです。
+
+```
+GET /api/debug?url=https://youtu.be/XXXXXXXXXXX
+→ { "ok": true, "stdout": "...", "stderr": "..." }
+```
+
 ## 5. Cloudflare Workerから使う場合
 
 Worker自体はyt-dlp/ffmpegを実行できないため、Renderサーバーへの
@@ -235,7 +246,32 @@ YouTube側のBotチェックにより、Cookie無しだと `Sign in to confirm y
 - `COOKIES_BASE64` が未設定の場合、起動ログに警告が出ますが動作自体は続行します
   (Cookie無しでダウンロードできる動画も多いため)。
 
-## 8. 注意点・既知の制約
+## 8. 「Requested format is not available」対策 (PO Token / SABR)
+
+Cookieを設定しても `Requested format is not available` が出る場合、原因は
+YouTube側の配信方式(SABR)によって **PO Token(Proof of Origin Token)** という
+署名を解決できないと一部のフォーマットが「存在しない」扱いになってしまうことです。
+
+これに対応するため、以下を導入しています。
+
+- **yt-dlp本体をpipで最新版インストール**(スタンドアロンバイナリより追従が早い)
+- **`yt-dlp-ejs`**: PO Token/nチャレンジの署名解決を行う追加コンポーネント
+- **Deno**: `yt-dlp-ejs` が署名解決に使うJavaScriptランタイム
+  (ベースイメージのNode.js標準では要件を満たさないため別途インストール)
+- yt-dlp呼び出し時に以下を常時付与
+  - `--js-runtimes deno`
+  - `--remote-components ejs:github`
+  - `--extractor-args youtube:formats=missing_pot`
+    (PO Tokenが無くても取得できるフォーマットは強制的に一覧へ含めさせる)
+
+これらは `server.js` の `resilienceArgs()` にまとまっており、
+`/api/formats` `/api/download` `/api/debug` すべてに自動で付与されます。
+特別な環境変数設定は不要です(Dockerfileでの依存インストールのみで有効になります)。
+
+原因調査が必要な場合は `/api/debug?url=...` で `--list-formats -v` の
+生ログを確認してください。
+
+## 9. 注意点・既知の制約
 
 - **Render無料プランのタイムアウト**: 無料プラン(Free Web Service)は
   一定時間アクセスがないとスリープし、次回リクエスト時にコールドスタートが
@@ -245,5 +281,7 @@ YouTube側のBotチェックにより、Cookie無しだと `Sign in to confirm y
   本サーバーはダウンロード完了後に一時ファイルを都度削除するため、通常は
   問題になりませんが、非常に大きな動画(数GB)は一時的にディスクを圧迫します。
 - **yt-dlpの更新**: YouTube側の仕様変更でyt-dlpが動かなくなることがあります。
-  その場合はDockerイメージを再ビルド(`yt-dlp`は最新版を毎回取得する構成に
+  その場合はDockerイメージを再ビルド(pipで毎回最新版を取得する構成に
   なっているため、Renderで再デプロイすれば最新版が入ります)してください。
+- **ビルド時間**: `python3`/`ffmpeg`/`deno` 等の追加インストールにより、
+  以前の構成よりDockerビルドに時間がかかります。初回デプロイは気長にお待ちください。
