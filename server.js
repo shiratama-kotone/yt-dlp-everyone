@@ -267,17 +267,39 @@ app.get('/api/formats', apiKeyAuth, async (req, res) => {
     // - 出力は常にMP4固定
     // - 音声は常に自動付与(映像に音声が無ければ、最良音質の音声を自動選択して結合)
     // - 同じ解像度が複数ある場合はビットレートが最も高いものだけ残す
+    // - MP4との相性が良い H.264(avc1) / AAC(mp4a) を優先し、VP9/Opus等をMP4に
+    //   詰め込むことで起きる再生不具合をできるだけ避ける
+    //   (該当解像度にH.264が無い場合のみVP9等にフォールバックする)
     // ------------------------------------------------------------
+    function videoCodecRank(f) {
+      if (!f.vcodec) return 0;
+      if (f.vcodec.startsWith('avc1') || f.vcodec.startsWith('h264')) return 2; // MP4と相性が良い
+      if (f.vcodec.startsWith('vp9') || f.vcodec.startsWith('vp09')) return 1;
+      return 0; // av01など
+    }
+    function audioCodecRank(f) {
+      if (!f.acodec) return 0;
+      if (f.acodec.startsWith('mp4a')) return 1; // AAC: MP4と相性が良い
+      return 0; // opusなど
+    }
+
     const audioCandidates = formats.filter((f) => f.hasAudio && !f.hasVideo);
-    const bestAudio = audioCandidates.sort(
-      (a, b) => (b.abr || 0) - (a.abr || 0) || (b.tbr || 0) - (a.tbr || 0)
-    )[0] || null;
+    const bestAudio = audioCandidates.sort((a, b) => {
+      const rankDiff = audioCodecRank(b) - audioCodecRank(a);
+      if (rankDiff !== 0) return rankDiff;
+      return (b.abr || 0) - (a.abr || 0) || (b.tbr || 0) - (a.tbr || 0);
+    })[0] || null;
 
     const bestByHeight = new Map();
     for (const f of formats) {
       if (!f.hasVideo || !f.height) continue;
       const current = bestByHeight.get(f.height);
-      if (!current || (f.tbr || 0) > (current.tbr || 0)) {
+      if (!current) {
+        bestByHeight.set(f.height, f);
+        continue;
+      }
+      const rankDiff = videoCodecRank(f) - videoCodecRank(current);
+      if (rankDiff > 0 || (rankDiff === 0 && (f.tbr || 0) > (current.tbr || 0))) {
         bestByHeight.set(f.height, f);
       }
     }
@@ -345,6 +367,9 @@ app.get('/api/download', apiKeyAuth, async (req, res) => {
     '-f', formatArg,
     '--merge-output-format', 'mp4',
     '--remux-video', 'mp4',
+    // moov atom(メタデータ)をファイル先頭に移動し、対応プレイヤーでの
+    // 再生不具合(最後まで読み込まないと正常に再生できない等)を防ぐ
+    '--postprocessor-args', 'ffmpeg:-movflags +faststart',
     '--no-playlist',
     '--no-warnings',
     '--ffmpeg-location', FFMPEG_PATH,
