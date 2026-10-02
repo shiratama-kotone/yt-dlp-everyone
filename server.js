@@ -95,13 +95,7 @@ function apiKeyAuth(req, res, next) {
 function isValidYouTubeUrl(url) {
   try {
     const u = new URL(url);
-    const host = u.hostname.replace(/^www\./, '');
-    return (
-      host === 'youtube.com' ||
-      host === 'm.youtube.com' ||
-      host === 'music.youtube.com' ||
-      host === 'youtu.be'
-    );
+    return u.protocol === 'http:' || u.protocol === 'https:';
   } catch (e) {
     return false;
   }
